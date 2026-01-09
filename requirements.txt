@@ -1,0 +1,2 @@
+PySide6>=6.6
+snowflake-connector-python>=3.6

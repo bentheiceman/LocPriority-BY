@@ -58,7 +58,7 @@ class MainWindow(QMainWindow):
         header_text_col = QVBoxLayout()
         header_text_col.setSpacing(2)
 
-        header = QLabel("Create LOCPRIORITY upload files (60,000 rows each)")
+        header = QLabel("Create LOCPRIORITY upload file(s) (max 60,000 rows per file)")
         header.setObjectName("Header")
         header.setWordWrap(True)
 
@@ -135,8 +135,9 @@ class MainWindow(QMainWindow):
         self.base_name.setPlaceholderText("Base file name")
 
         self.rows_per_file = QSpinBox()
-        self.rows_per_file.setRange(1, 60000)
+        self.rows_per_file.setRange(60000, 60000)
         self.rows_per_file.setValue(60000)
+        self.rows_per_file.setEnabled(False)
 
         self.include_header = QCheckBox("Include header row in each file")
         self.include_header.setChecked(True)
@@ -155,8 +156,9 @@ class MainWindow(QMainWindow):
         form_layout.addWidget(QLabel("Base file name"), 2, 0)
         form_layout.addWidget(self.base_name, 2, 1, 1, 2)
 
-        form_layout.addWidget(QLabel("Rows per file"), 3, 0)
+        form_layout.addWidget(QLabel("Rows per file (fixed)"), 3, 0)
         form_layout.addWidget(self.rows_per_file, 3, 1)
+        form_layout.addWidget(QLabel("1 file if ≤60,000 rows; 2 files if >60,000"), 3, 2)
 
         form_layout.addWidget(self.include_header, 4, 0, 1, 3)
         form_layout.addWidget(self.validate_columns, 5, 0, 1, 3)
@@ -279,7 +281,7 @@ class MainWindow(QMainWindow):
         self._append_log(f"Output: {output_dir}")
         self._append_log(f"Base name: {base_name}")
         self._append_log(f"Source: {'Snowflake' if use_snowflake else 'CSV'}")
-        self._append_log(f"Rows per file: {rows_per_file}")
+        self._append_log("Rows per file: 60000 (fixed)")
         def worker() -> None:
             try:
                 if use_snowflake:
@@ -288,7 +290,7 @@ class MainWindow(QMainWindow):
                         query=self.sf_query.toPlainText(),
                         output_dir=output_dir,
                         base_name=base_name,
-                        max_rows=rows_per_file,
+                        max_rows=60000,
                         include_header=include_header,
                         insecure_mode=bool(self.sf_insecure.isChecked()),
                         on_log=lambda m: self._post_to_ui(lambda: self._append_log(m)),
@@ -298,7 +300,7 @@ class MainWindow(QMainWindow):
                         input_csv=input_csv,
                         output_dir=output_dir,
                         base_name=base_name,
-                        max_rows=rows_per_file,
+                        max_rows=60000,
                         include_header=include_header,
                         validate_required_columns=validate_columns,
                         on_progress=None,

@@ -50,14 +50,12 @@ def export_query_to_chunked_csv(
     if not query:
         raise SnowflakeExportError("Query is empty.")
 
-    if max_rows < 1 or max_rows > 60000:
-        raise SnowflakeExportError("Rows per file must be between 1 and 60000.")
+    if max_rows != 60000:
+        raise SnowflakeExportError("This tool enforces 60,000 rows max per file.")
 
-    # Treat max_rows as total rows per file; if we include a header row,
-    # the max number of data rows must be reduced accordingly.
-    max_data_rows = max_rows - (1 if include_header else 0)
-    if max_data_rows < 1:
-        raise SnowflakeExportError("Rows per file is too small for a header row.")
+    # Interpretation: 60,000 is the maximum number of DATA rows per file.
+    # Header (when enabled) does not count toward the limit.
+    max_data_rows = 60000
 
     out_dir = Path(output_dir)
     if not out_dir.exists():
@@ -109,36 +107,52 @@ def export_query_to_chunked_csv(
             if c not in ordered_cols:
                 ordered_cols.append(c)
 
+        def first_path() -> Path:
+            return out_dir / f"{base_name}.csv"
+
         def part_path(part_index: int) -> Path:
             return out_dir / f"{base_name}_{part_index:03d}.csv"
 
         files_written = 0
         rows_written = 0
-        part_index = 1
         rows_in_part = 0
 
         out_fp = None
         writer = None
 
-        def open_next() -> None:
-            nonlocal out_fp, writer, files_written, rows_in_part, part_index
+        def open_first() -> Path:
+            nonlocal out_fp, writer, files_written, rows_in_part
+            p = first_path()
+            out_fp = p.open("w", newline="", encoding="utf-8")
+            writer = csv.writer(out_fp)
+            files_written = 1
+            rows_in_part = 0
+            if include_header:
+                writer.writerow(ordered_cols)
+            log(f"Writing: {p.name}")
+            return p
+
+        def rollover_to_second(first_file: Path) -> None:
+            nonlocal out_fp, writer, files_written, rows_in_part
             if out_fp:
                 out_fp.close()
 
-            p = part_path(part_index)
-            part_index += 1
-            rows_in_part = 0
+            first_renamed = part_path(1)
+            try:
+                first_file.replace(first_renamed)
+            except OSError as exc:
+                raise SnowflakeExportError(f"Failed to rename output file: {exc}") from exc
 
+            p = part_path(2)
             out_fp = p.open("w", newline="", encoding="utf-8")
             writer = csv.writer(out_fp)
-            files_written += 1
-
+            files_written = 2
+            rows_in_part = 0
             if include_header:
                 writer.writerow(ordered_cols)
-
             log(f"Writing: {p.name}")
 
-        open_next()
+        first_file = open_first()
 
         # Stream rows in batches
         cur.arraysize = 10000
@@ -149,17 +163,24 @@ def export_query_to_chunked_csv(
 
             for row in batch:
                 if rows_in_part >= max_data_rows:
-                    open_next()
+                    if files_written == 1:
+                        rollover_to_second(first_file)
+                    else:
+                        raise SnowflakeExportError(
+                            "Result exceeds 120,000 rows. This tool only outputs 1 file (<=60,000) "
+                            "or 2 files (<=120,000 total)."
+                        )
 
                 # Row is a tuple in column order `columns`.
                 row_map = dict(zip(columns, row))
+                # `writer` is initialized by open_first() and may be re-initialized by rollover.
                 writer.writerow([row_map.get(c) for c in ordered_cols])
                 rows_in_part += 1
                 rows_written += 1
 
         # If there were zero rows, remove the empty first file
         if rows_written == 0:
-            first = part_path(1)
+            first = first_path()
             try:
                 first.unlink(missing_ok=True)  # py3.8+ supports missing_ok
             except TypeError:

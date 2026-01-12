@@ -55,14 +55,12 @@ def chunk_csv(
     - Writes files named: <base_name>_001.csv, <base_name>_002.csv, ...
     """
 
-    if max_rows < 1 or max_rows > 60000:
-        raise CsvChunkerError("Rows per file must be between 1 and 60000.")
+    if max_rows != 60000:
+        raise CsvChunkerError("This tool enforces 60,000 rows max per file.")
 
-    # Treat max_rows as total CSV rows per file; when header is included,
-    # reduce the maximum data rows so the file stays within the limit.
-    max_data_rows = max_rows - (1 if include_header else 0)
-    if max_data_rows < 1:
-        raise CsvChunkerError("Rows per file is too small for a header row.")
+    # Interpretation: 60,000 is the maximum number of DATA rows per file.
+    # If header is included, it does not count toward the limit.
+    max_data_rows = 60000
 
     input_path = Path(input_csv)
     if not input_path.exists():
@@ -85,7 +83,10 @@ def chunk_csv(
     files_written = 0
     rows_written = 0
 
-    current_part_index = 1
+    # Output naming:
+    # - If total rows <= 60,000: <base>.csv
+    # - If > 60,000: rename first to <base>_001.csv and create <base>_002.csv
+    current_part_index = 0
     current_part_rows = 0
     out_fp = None
     out_writer = None
@@ -102,30 +103,55 @@ def chunk_csv(
             if not fieldnames:
                 raise CsvChunkerError("Input CSV appears to have no header/columns.")
 
-            def open_next_file() -> None:
+            def open_first_file() -> Path:
+                nonlocal out_fp, out_writer, files_written, current_part_rows
+                out_file = Path(output_dir) / f"{base_name}.csv"
+                out_fp = out_file.open("w", newline="", encoding="utf-8")
+                out_writer = csv.DictWriter(out_fp, fieldnames=fieldnames, extrasaction="ignore")
+                files_written = 1
+                current_part_rows = 0
+                if include_header:
+                    out_writer.writeheader()
+                log(f"Writing: {out_file.name}")
+                return out_file
+
+            def rollover_to_second_file(first_path: Path) -> None:
                 nonlocal out_fp, out_writer, files_written, current_part_rows, current_part_index
 
+                # Close first file so we can rename on Windows.
                 if out_fp:
                     out_fp.close()
 
-                out_file = _part_path(output_dir, base_name, current_part_index)
-                current_part_index += 1
-                current_part_rows = 0
+                first_renamed = _part_path(output_dir, base_name, 1)
+                # Rename <base>.csv -> <base>_001.csv
+                try:
+                    first_path.replace(first_renamed)
+                except OSError as exc:
+                    raise CsvChunkerError(f"Failed to rename output file: {exc}") from exc
 
+                out_file = _part_path(output_dir, base_name, 2)
                 out_fp = out_file.open("w", newline="", encoding="utf-8")
                 out_writer = csv.DictWriter(out_fp, fieldnames=fieldnames, extrasaction="ignore")
-                files_written += 1
+                files_written = 2
+                current_part_rows = 0
+                current_part_index = 2
 
                 if include_header:
                     out_writer.writeheader()
 
                 log(f"Writing: {out_file.name}")
 
-            open_next_file()
+            first_path = open_first_file()
 
             for row in reader:
                 if current_part_rows >= max_data_rows:
-                    open_next_file()
+                    if files_written == 1:
+                        rollover_to_second_file(first_path)
+                    else:
+                        raise CsvChunkerError(
+                            "Result exceeds 120,000 rows. This tool only outputs 1 file (<=60,000) "
+                            "or 2 files (<=120,000 total)."
+                        )
 
                 out_writer.writerow(row)
                 current_part_rows += 1
@@ -139,7 +165,7 @@ def chunk_csv(
 
     # If input had only headers and no data rows, delete the empty output file.
     if rows_written == 0:
-        first = _part_path(output_dir, base_name, 1)
+        first = Path(output_dir) / f"{base_name}.csv"
         if first.exists():
             try:
                 first.unlink()

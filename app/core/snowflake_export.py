@@ -7,12 +7,9 @@ from typing import Callable
 from app.core.csv_chunker import REQUIRED_COLUMNS, CsvChunkerError, _safe_base_name  # noqa: PLC2701
 
 
-DEFAULT_QUERY = """select distinct item,loc, locpriority
-from dm_supplychain.IPR_STRATEGY.LOCPRIORITY_UPLOAD
-inner join (
-    select distinct item,loc,locpriority as old_locpriority
-    from dm_supplychain.IPR_STRATEGY.LOCPRIORITY_UPLOAD where
-        upload_dt in (select top 2 upload_dt from dm_supplychain.IPR_STRATEGY.LOCPRIORITY_UPLOAD)
+DEFAULT_QUERY = """select distinct item,loc, locpriority from dm_supplychain.IPR_STRATEGY.LOCPRIORITY_UPLOAD 
+inner join (select distinct item,loc,locpriority as old_locpriority from dm_supplychain.IPR_STRATEGY.LOCPRIORITY_UPLOAD where 
+    upload_dt in (select distinct top 2 upload_dt from dm_supplychain.IPR_STRATEGY.LOCPRIORITY_UPLOAD order by upload_dt desc)
 ) using (item,loc)
 where upload_dt=current_date()
 and locpriority<>old_locpriority

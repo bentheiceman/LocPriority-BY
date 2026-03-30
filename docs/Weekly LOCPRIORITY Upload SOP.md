@@ -61,15 +61,27 @@ The tables referenced in the query above are created via a scheduled weekly proc
 ```sql
 create or replace view dm_supplychain.IPR_STRATEGY.v_LOCPRIORITY_UPLOAD as (
 select item, loc, 
-case when udc_source_3 is not null and udc_source_3<>udc_ultimate_source then '4'
-when udc_source_3 is not null then '3'
-when udc_source_2 is not null then '2'
-else '1' end as locpriority, current_date() as upload_dt
+case
+  when regexp_like(loc, '^3[0-9]{3}$') and regexp_like(udc_source_1, '^[A-Z]{2}[0-9]{2}$') then '0'
+  when udc_source_3 is not null and udc_source_3<>udc_ultimate_source then '4'
+  when udc_source_3 is not null then '3'
+  when udc_source_2 is not null then '2'
+  else '1'
+end as locpriority, current_date() as upload_dt
 from edp.std_jda.skuextract
 where udc_source_1 is not null
 )
 ;
 ```
+
+**LOCPRIORITY classification rules (highest → lowest priority):**
+| Priority | Condition | Meaning |
+|----------|-----------|--------|
+| 0 | LOC is a 4-digit code starting with `3` AND udc_source_1 is a standard HDS DC (2-letter state + 2-digit number, e.g. `GA01`) | VMI building fed from an HDS DC |
+| 1 | Only udc_source_1 populated | Single-echelon supply |
+| 2 | udc_source_2 populated | Two-echelon supply |
+| 3 | udc_source_3 populated, same as ultimate source | Three-echelon (self-sourced) |
+| 4 | udc_source_3 populated, differs from ultimate source | Three-echelon (cross-sourced) |
 
 ### Procedure
 ```sql

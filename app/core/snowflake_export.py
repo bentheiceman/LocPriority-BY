@@ -16,8 +16,71 @@ and locpriority<>old_locpriority
 """
 
 
+ACTIVATE_VIEW_SQL = """create or replace view dm_supplychain.IPR_STRATEGY.v_LOCPRIORITY_UPLOAD as (
+select item, loc,
+case
+  when regexp_like(loc, '^3[0-9]{3}$') and regexp_like(udc_source_1, '^[A-Z]{2}[0-9]{2}$') then '0'
+  when udc_source_3 is not null and udc_source_3<>udc_ultimate_source then '4'
+  when udc_source_3 is not null then '3'
+  when udc_source_2 is not null then '2'
+  else '1'
+end as locpriority, current_date() as upload_dt
+from edp.std_jda.skuextract
+where udc_source_1 is not null
+)
+"""
+
+
 class SnowflakeExportError(RuntimeError):
     pass
+
+
+def activate_view(
+    *,
+    email: str,
+    insecure_mode: bool = True,
+    account: str = "HDSUPPLY-DATA",
+    authenticator: str = "externalbrowser",
+    on_log: Callable[[str], None] | None = None,
+) -> None:
+    """Deploy / refresh the v_LOCPRIORITY_UPLOAD view in Snowflake."""
+
+    def log(msg: str) -> None:
+        if on_log:
+            on_log(msg)
+
+    try:
+        import snowflake.connector as sc  # type: ignore
+    except Exception as exc:  # noqa: BLE001
+        raise SnowflakeExportError("Snowflake connector is not available.") from exc
+
+    con = None
+    cur = None
+    try:
+        log("Connecting to Snowflake…")
+        con = sc.connect(
+            user=email,
+            account=account,
+            authenticator=authenticator,
+            insecure_mode=bool(insecure_mode),
+        )
+        cur = con.cursor()
+        log("Activating view v_LOCPRIORITY_UPLOAD…")
+        cur.execute(ACTIVATE_VIEW_SQL)
+        log("View activated successfully.")
+    except Exception as exc:  # noqa: BLE001
+        raise SnowflakeExportError(f"Failed to activate view: {exc}") from exc
+    finally:
+        try:
+            if cur is not None:
+                cur.close()
+        except Exception:
+            pass
+        try:
+            if con is not None:
+                con.close()
+        except Exception:
+            pass
 
 
 def export_query_to_chunked_csv(

@@ -57,10 +57,11 @@ class SnowflakeExportError(RuntimeError):
 
 def activate_view(
     *,
-    email: str,
+    email: str = "",
     insecure_mode: bool = True,
     account: str = "HDSUPPLY-DATA",
     authenticator: str = "externalbrowser",
+    connection=None,
     on_log: Callable[[str], None] | None = None,
 ) -> None:
     """Deploy / refresh the v_LOCPRIORITY_UPLOAD view in Snowflake."""
@@ -69,25 +70,28 @@ def activate_view(
         if on_log:
             on_log(msg)
 
-    try:
-        import snowflake.connector as sc  # type: ignore
-    except Exception as exc:  # noqa: BLE001
-        raise SnowflakeExportError("Snowflake connector is not available.") from exc
-
-    con = None
+    owns_connection = connection is None
+    con = connection
     cur = None
     try:
-        log("Connecting to Snowflake…")
-        con = sc.connect(
-            user=email,
-            account=account,
-            authenticator=authenticator,
-            insecure_mode=bool(insecure_mode),
-        )
-        cur = con.cursor()
+        if con is None:
+            try:
+                import snowflake.connector as sc  # type: ignore
+            except Exception as exc:  # noqa: BLE001
+                raise SnowflakeExportError("Snowflake connector is not available.") from exc
+            log("Connecting to Snowflake…")
+            con = sc.connect(
+                user=email,
+                account=account,
+                authenticator=authenticator,
+                insecure_mode=bool(insecure_mode),
+            )
         log("Activating view v_LOCPRIORITY_UPLOAD…")
+        cur = con.cursor()
         cur.execute(ACTIVATE_VIEW_SQL)
         log("View activated successfully.")
+    except SnowflakeExportError:
+        raise
     except Exception as exc:  # noqa: BLE001
         raise SnowflakeExportError(f"Failed to activate view: {exc}") from exc
     finally:
@@ -96,11 +100,12 @@ def activate_view(
                 cur.close()
         except Exception:
             pass
-        try:
-            if con is not None:
-                con.close()
-        except Exception:
-            pass
+        if owns_connection:
+            try:
+                if con is not None:
+                    con.close()
+            except Exception:
+                pass
 
 
 def export_query_to_chunked_csv(
@@ -114,6 +119,7 @@ def export_query_to_chunked_csv(
     insecure_mode: bool = True,
     account: str = "HDSUPPLY-DATA",
     authenticator: str = "externalbrowser",
+    connection=None,
     on_log: Callable[[str], None] | None = None,
 ) -> dict:
     """Run a Snowflake query and stream-write chunked CSV files.
@@ -147,21 +153,22 @@ def export_query_to_chunked_csv(
         if on_log:
             on_log(msg)
 
-    try:
-        import snowflake.connector as sc  # type: ignore
-    except Exception as exc:  # noqa: BLE001
-        raise SnowflakeExportError("Snowflake connector is not available.") from exc
-
-    con = None
+    owns_connection = connection is None
+    con = connection
     cur = None
     try:
-        log("Connecting to Snowflake (external browser SSO)…")
-        con = sc.connect(
-            user=email,
-            account=account,
-            authenticator=authenticator,
-            insecure_mode=bool(insecure_mode),
-        )
+        if con is None:
+            try:
+                import snowflake.connector as sc  # type: ignore
+            except Exception as exc:  # noqa: BLE001
+                raise SnowflakeExportError("Snowflake connector is not available.") from exc
+            log("Connecting to Snowflake (external browser SSO)…")
+            con = sc.connect(
+                user=email,
+                account=account,
+                authenticator=authenticator,
+                insecure_mode=bool(insecure_mode),
+            )
         cur = con.cursor()
 
         log("Running query…")
@@ -284,8 +291,9 @@ def export_query_to_chunked_csv(
                 cur.close()
         except Exception:
             pass
-        try:
-            if con is not None:
-                con.close()
-        except Exception:
-            pass
+        if owns_connection:
+            try:
+                if con is not None:
+                    con.close()
+            except Exception:
+                pass

@@ -13,10 +13,11 @@ class SnowflakeAuthError(RuntimeError):
     pass
 
 
-def authenticate(*, email: str, insecure_mode: bool, config: SnowflakeAuthConfig | None = None) -> None:
+def authenticate(*, email: str, insecure_mode: bool, config: SnowflakeAuthConfig | None = None):
     """Authenticate to Snowflake via SSO external browser.
 
-    This performs a connection attempt and immediately closes it on success.
+    Returns the live connection so it can be reused for subsequent operations
+    (view activation, queries) without requiring additional SSO sign-ins.
     """
 
     email = (email or "").strip()
@@ -41,8 +42,5 @@ def authenticate(*, email: str, insecure_mode: bool, config: SnowflakeAuthConfig
         )
     except Exception as exc:  # noqa: BLE001
         raise SnowflakeAuthError(str(exc)) from exc
-    finally:
-        try:
-            con.close()  # type: ignore[has-type]
-        except Exception:
-            pass
+
+    return con

@@ -310,6 +310,7 @@ class MainWindow(QMainWindow):
         # ── Internal state ──────────────────────────────────────────
         self._auth_thread: threading.Thread | None = None
         self._authenticated = False
+        self._sf_connection = None  # shared Snowflake connection from Step 1
 
         # Pulse timer for indeterminate steps
         self._pulse_timer = QTimer(self)
@@ -385,17 +386,18 @@ class MainWindow(QMainWindow):
 
         def worker() -> None:
             try:
-                authenticate(email=email, insecure_mode=insecure_mode)
+                con = authenticate(email=email, insecure_mode=insecure_mode)
             except (SnowflakeAuthError, Exception) as exc:
                 self._post_to_ui(lambda: self._auth_failed(str(exc)))
                 return
-            self._post_to_ui(self._auth_ok)
+            self._post_to_ui(lambda: self._auth_ok(con))
 
         self._auth_thread = threading.Thread(target=worker, daemon=True)
         self._auth_thread.start()
 
-    def _auth_ok(self) -> None:
+    def _auth_ok(self, connection=None) -> None:
         self._authenticated = True
+        self._sf_connection = connection
         self.sf_auth_btn.setEnabled(True)
         self._set_step_status(self.step1_status, "ok", "Authenticated")
         self.step1_box.setObjectName("StepDone")
@@ -429,6 +431,7 @@ class MainWindow(QMainWindow):
                 activate_view(
                     email=email,
                     insecure_mode=insecure_mode,
+                    connection=self._sf_connection,
                     on_log=lambda m: self._post_to_ui(lambda: self._append_log(m)),
                 )
             except (SnowflakeExportError, Exception) as exc:
@@ -490,6 +493,7 @@ class MainWindow(QMainWindow):
                         max_rows=60000,
                         include_header=include_header,
                         insecure_mode=bool(self.sf_insecure.isChecked()),
+                        connection=self._sf_connection,
                         on_log=lambda m: self._post_to_ui(lambda: self._append_log(m)),
                     )
                 else:
@@ -550,6 +554,16 @@ class MainWindow(QMainWindow):
         self._set_overall(55, "Generation failed")
         self._append_log(f"✕ Failed: {message}")
         QMessageBox.critical(self, "Failed", message)
+
+
+    def closeEvent(self, event) -> None:  # noqa: ANN001, N802
+        if self._sf_connection is not None:
+            try:
+                self._sf_connection.close()
+            except Exception:
+                pass
+            self._sf_connection = None
+        super().closeEvent(event)
 
 
 def main() -> int:

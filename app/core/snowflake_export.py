@@ -7,12 +7,32 @@ from typing import Callable
 from app.core.csv_chunker import REQUIRED_COLUMNS, CsvChunkerError, _safe_base_name  # noqa: PLC2701
 
 
-DEFAULT_QUERY = """select distinct item,loc, locpriority from dm_supplychain.IPR_STRATEGY.LOCPRIORITY_UPLOAD 
-inner join (select distinct item,loc,locpriority as old_locpriority from dm_supplychain.IPR_STRATEGY.LOCPRIORITY_UPLOAD where 
-    upload_dt in (select distinct top 2 upload_dt from dm_supplychain.IPR_STRATEGY.LOCPRIORITY_UPLOAD order by upload_dt desc)
-) using (item,loc)
-where upload_dt=current_date()
-and locpriority<>old_locpriority
+DEFAULT_QUERY = """\
+with today_adjusted as (
+    select distinct t.item, t.loc,
+        case
+            when regexp_like(t.loc, '^3[0-9]{3}$')
+                 and s.udc_source_1 is not null
+                 and regexp_like(s.udc_source_1, '^[A-Z]{2}[0-9]{2}$')
+            then '0'
+            else t.locpriority
+        end as locpriority
+    from dm_supplychain.IPR_STRATEGY.LOCPRIORITY_UPLOAD t
+    left join edp.std_jda.skuextract s on s.item = t.item and s.loc = t.loc
+    where t.upload_dt = current_date()
+)
+select distinct a.item, a.loc, a.locpriority
+from today_adjusted a
+inner join (
+    select distinct item, loc, locpriority as old_locpriority
+    from dm_supplychain.IPR_STRATEGY.LOCPRIORITY_UPLOAD
+    where upload_dt in (
+        select distinct top 2 upload_dt
+        from dm_supplychain.IPR_STRATEGY.LOCPRIORITY_UPLOAD
+        order by upload_dt desc
+    )
+) old on old.item = a.item and old.loc = a.loc
+where a.locpriority <> old.old_locpriority
 """
 
 
